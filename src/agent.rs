@@ -46,7 +46,7 @@ impl<State: Reinforcement + Clone + Send + Sync> Agent<State> {
 
         self.state.get_outputs(&self.dac);
         self.state.update_physics();
-        self.state.update_score();
+        self.state.update_score(&mut self.score);
 
         self.instant += TICK_DURATION.get().unwrap();
     }

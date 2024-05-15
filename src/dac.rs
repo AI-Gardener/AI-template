@@ -3,7 +3,7 @@ use super::*;
 /// Directed Acyclic Graph, the neural network
 #[derive(Clone, Debug)]
 pub struct DAC {
-    nodes: Vec<Box<Node>>,
+    pub nodes: Vec<Box<Node>>,
     order: Vec<usize>,
 }
 

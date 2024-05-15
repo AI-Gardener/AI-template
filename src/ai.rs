@@ -7,31 +7,28 @@ pub struct AI<State: Reinforcement + Clone + Send + Sync> {
 }
 
 impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
-    pub fn init(
-        agents_num: usize,
-        num_generations: usize,
-        ticks_per_evaluation: usize,
-        tick_duration: f32,
-        start_nodes: Vec<Box<Node>>,
-    ) -> Self {
-        AGENTS_NUM.set(agents_num).unwrap();
-        NUM_GENERATIONS.set(num_generations).unwrap();
-        TICKS_PER_EVALUATION.set(ticks_per_evaluation).unwrap();
-        TICK_DURATION.set(tick_duration).unwrap();
-        START_NODES.set(start_nodes).unwrap();
+    /// Initializes the AI.
+    pub fn init() -> Self {
+        AGENTS_NUM.set(State::num_agents()).unwrap();
+        NUM_GENERATIONS.set(State::num_generations()).unwrap();
+        TICKS_PER_EVALUATION.set(State::ticks_per_evaluation()).unwrap();
+        TICK_DURATION.set(State::tick_duration()).unwrap();
+        START_NODES.set(State::start_nodes()).unwrap();
         Self {
             agents: (0..*AGENTS_NUM.get().unwrap()).map(|_| Agent::new()).collect(),
             past_agents: Vec::new(),
         }
     }
 
+    /// Trains the AI
     pub fn train(&mut self) {
-        (0..*NUM_GENERATIONS.get().unwrap()).into_iter().for_each(|gen| {
+        (1..*NUM_GENERATIONS.get().unwrap()).into_iter().for_each(|gen| {
             println!("Testing generation {}...", gen);
             self.evaluate();
             self.sort();
             self.next_gen();
         });
+        println!("Testing generation {}...", *NUM_GENERATIONS.get().unwrap());
         self.evaluate();
         self.sort();
     }
@@ -63,18 +60,20 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
         }
 
 
-        let mut best_agent = self.agents
+        let best_agent = self.agents
             .iter().nth(0).unwrap()
             .clone();
         println!("Best DAC score: {}.\nDisplaying the evaluation...", best_agent.score);
         println!("Best DAC network: {:?}", best_agent.dac);
-        best_agent.score = 0.1;
-        best_agent.instant = 0.0;
+        let mut best_agent_clone: Agent<State> = Agent {
+            dac: best_agent.dac.clone(),
+            ..Agent::new()
+        };
 
 
         // Running the visual simulation.
         let opengl = OpenGL::V3_2;
-        let mut window: Window = WindowSettings::new("Pendulum Simulation", [1440, 900])
+        let mut window: Window = WindowSettings::new("AI Agent Test", [1280, 720])
             .graphics_api(opengl)
             .fullscreen(false)
             .exit_on_esc(true)
@@ -98,8 +97,8 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
                 break;
             }
             if let Some(args) = e.render_args() {
-                best_agent.evaluate_step();
-                view.render(&args, &best_agent);
+                best_agent_clone.evaluate_step();
+                view.render(&args, &best_agent_clone);
             }
     
             if let Some(args) = e.update_args() {

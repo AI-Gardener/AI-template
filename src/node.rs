@@ -1,7 +1,7 @@
 /// A neuron
 #[derive(Clone, Debug)]
 pub struct Node {
-    pub(crate) val: f32,
+    pub val: f32,
     pub(crate) bias: f32,
     pub(crate) activation_f: fn(f32) -> f32,
     /// Parents indices

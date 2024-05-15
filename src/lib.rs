@@ -22,11 +22,11 @@ use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use piston::RenderArgs;
 
 
-pub static AGENTS_NUM: OnceCell<usize> = OnceCell::new();
-pub static NUM_GENERATIONS: OnceCell<usize> = OnceCell::new();
-pub static TICKS_PER_EVALUATION: OnceCell<usize> = OnceCell::new(); // 10 seconds
-pub static TICK_DURATION: OnceCell<f32> = OnceCell::new(); // 60 modifications per second
-pub static START_NODES: OnceCell<Vec<Box<Node>>> = OnceCell::new();
+pub(crate) static AGENTS_NUM: OnceCell<usize> = OnceCell::new();
+pub(crate) static NUM_GENERATIONS: OnceCell<usize> = OnceCell::new();
+pub(crate) static TICKS_PER_EVALUATION: OnceCell<usize> = OnceCell::new(); // 10 seconds
+pub(crate) static TICK_DURATION: OnceCell<f32> = OnceCell::new(); // 60 modifications per second
+pub(crate) static START_NODES: OnceCell<Vec<Box<Node>>> = OnceCell::new();
 
 /// This trait must be implemented for your state struct (a struct with fields used for the training).  
 /// While training, the implemented methods will (repeatedly) be called in the order:  
@@ -38,12 +38,36 @@ pub static START_NODES: OnceCell<Vec<Box<Node>>> = OnceCell::new();
 /// state.update_score();
 /// ```
 pub trait Reinforcement {
+    /// The number of agents per generation.
+    /// 
+    /// This variable is read once when initializing AI. Modifying it after that will have no inner effect.
+    fn num_agents() -> usize { 300 }
+    /// The number of generations trained.
+    /// 
+    /// This variable is read once when initializing AI. Modifying it after that will have no inner effect.
+    fn num_generations() -> usize { 600 }
+    /// The number of ticks a simulation lasts.
+    /// 
+    /// This variable is read once when initializing AI. Modifying it after that will have no inner effect.
+    fn ticks_per_evaluation() -> usize { 60 * 10 }
+    /// The duration of a tick, and the difference in time between 2 consecutive updates, Delta time.
+    /// 
+    /// This variable is read once when initializing AI. Modifying it after that will have no inner effect.
+    fn tick_duration() -> f32 { 1.0 / 60.0 }
+    /// The starting nodes of the graph network. Most likely contains all the input and outputs.
+    /// 
+    /// This variable is read once when initializing AI. Modifying it after that will have no inner effect.
+    fn start_nodes() -> Vec<Box<Node>>;
     /// Default values when creating an inctance of this.
     fn init() -> Self;
     /// Reflects state values to the network inputs.
     fn set_inputs(&self, dac: &mut DAC);
     /// Reflects the network outputs to state values.
     fn get_outputs(&mut self, dac: &DAC);
+    /// Updates the state values after getting the output.
+    fn update_physics(&mut self);
+    /// Updates the score, reflecting how well the AI is doing at that instant.
+    fn update_score(&mut self, score: &mut f32);
     /// Get a mutated version of this network.  
     /// 
     /// Default implementation:  
@@ -79,10 +103,6 @@ pub trait Reinforcement {
             dac.unmutated()
         }
     }
-    /// Updates the state values after getting the output.
-    fn update_physics(&mut self);
-    /// Updates the score, reflecting how well the AI is doing at that instant.
-    fn update_score(&mut self);
     /// Draws the current scene
     fn render(&self, gl: &mut GlGraphics, args: &RenderArgs);
 }
