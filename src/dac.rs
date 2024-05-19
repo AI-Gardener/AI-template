@@ -68,6 +68,12 @@ impl DAC {
         // println!("Reordered");
     }
 
+    pub(crate) fn zeroed(&mut self) {
+        self.nodes.iter_mut().for_each(|node| {
+            node.val = 0.0;
+        })
+    }
+
     pub fn run(&mut self) {
         // let start = std::time::Instant::now();
 
@@ -150,7 +156,7 @@ impl DAC {
                 .for_each(|node| node.layer += 1);
         }
         
-        new.nodes.push(Box::new(Node::new(0.0, 0.0, relu, vec![connection_parent_i], vec![(connection_child_i, connection_weight)], new_node_layer)));
+        new.nodes.push(Box::new(Node::new(0.0, 0.0, *NEWNODE_ACTIVATION_F.get().unwrap(), vec![connection_parent_i], vec![(connection_child_i, connection_weight)], new_node_layer)));
         new
     }
 

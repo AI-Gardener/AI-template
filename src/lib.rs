@@ -27,6 +27,7 @@ pub(crate) static NUM_GENERATIONS: OnceCell<usize> = OnceCell::new();
 pub(crate) static TICKS_PER_EVALUATION: OnceCell<usize> = OnceCell::new(); // 10 seconds
 pub(crate) static TICK_DURATION: OnceCell<f32> = OnceCell::new(); // 60 modifications per second
 pub(crate) static START_NODES: OnceCell<Vec<Box<Node>>> = OnceCell::new();
+pub(crate) static NEWNODE_ACTIVATION_F: OnceCell<fn(f32) -> f32> = OnceCell::new();
 
 /// This trait must be implemented for your state struct (a struct with fields used for the training).  
 /// While training, the implemented methods will (repeatedly) be called in the order:  
@@ -58,6 +59,8 @@ pub trait Reinforcement {
     /// 
     /// This variable is read once when initializing AI. Modifying it after that will have no inner effect.
     fn start_nodes() -> Vec<Box<Node>>;
+    /// The activation function used by new hidden nodes.
+    fn newnode_activation_f() -> fn(f32) -> f32;
     /// Default values when creating an inctance of this.
     fn init() -> Self;
     /// Reflects state values to the network inputs.
@@ -66,7 +69,8 @@ pub trait Reinforcement {
     fn get_outputs(&mut self, dac: &DAC);
     /// Updates the state values after getting the output.
     fn update_physics(&mut self);
-    /// Updates the score, reflecting how well the AI is doing at that instant.
+    /// Updates the score, reflecting how well the AI is doing at that instant.  
+    /// The score should not end up negative.
     fn update_score(&mut self, score: &mut f32);
     /// Get a mutated version of this network.  
     /// 

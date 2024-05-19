@@ -40,11 +40,12 @@ impl<State: Reinforcement + Clone + Send + Sync> Agent<State> {
     }
 
     pub(crate) fn evaluate_step(&mut self) {
+        self.dac.zeroed();
+
         self.state.set_inputs(&mut self.dac);
-
         self.dac.run();
-
         self.state.get_outputs(&self.dac);
+
         self.state.update_physics();
         self.state.update_score(&mut self.score);
 

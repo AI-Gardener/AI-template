@@ -14,6 +14,7 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
         TICKS_PER_EVALUATION.set(State::ticks_per_evaluation()).unwrap();
         TICK_DURATION.set(State::tick_duration()).unwrap();
         START_NODES.set(State::start_nodes()).unwrap();
+        NEWNODE_ACTIVATION_F.set(State::newnode_activation_f()).unwrap();
         Self {
             agents: (0..*AGENTS_NUM.get().unwrap()).map(|_| Agent::new()).collect(),
             past_agents: Vec::new(),
@@ -66,16 +67,15 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
         println!("Best DAC score: {}.\nDisplaying the evaluation...", best_agent.score);
         println!("Best DAC network: {:?}", best_agent.dac);
         let mut best_agent_clone: Agent<State> = Agent {
-            dac: best_agent.dac.clone(),
+            dac: best_agent.dac,
             ..Agent::new()
         };
 
 
         // Running the visual simulation.
         let opengl = OpenGL::V3_2;
-        let mut window: Window = WindowSettings::new("AI Agent Test", [1280, 720])
+        let mut window: Window = WindowSettings::new("AI Agent Test", [1920, 1080])
             .graphics_api(opengl)
-            .fullscreen(false)
             .exit_on_esc(true)
             .samples(8)
             .build()
@@ -84,8 +84,8 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
             gl: GlGraphics::new(opengl),
         };
         let mut events = Events::new(EventSettings {
-                max_fps: 60,
-                ups: 60,
+                max_fps: (1.0 / State::tick_duration()) as u64,
+                ups: (1.0 / State::tick_duration()) as u64,
                 swap_buffers: true,
                 bench_mode: false,
                 lazy: false,
@@ -97,15 +97,16 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
                 break;
             }
             if let Some(args) = e.render_args() {
-                best_agent_clone.evaluate_step();
                 view.render(&args, &best_agent_clone);
             }
     
             if let Some(args) = e.update_args() {
                 frame_count += 1;
+                best_agent_clone.evaluate_step();
                 view.update(&args);
             }
         }
+        println!("Best score: {}", best_agent_clone.score);
     }
 
     fn evaluate(&mut self) {
@@ -133,7 +134,10 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
                 *score/=total_score;
             });
 
-        let mut new_agents = self.agents[0..*AGENTS_NUM.get().unwrap()/3].to_vec();
+        let mut new_agents: Vec<Agent<State>> = self.agents[0..*AGENTS_NUM.get().unwrap()/3].to_vec();
+        new_agents.iter_mut().for_each(|agent| {
+            agent.state = State::init()
+        });
         while new_agents.len() < *AGENTS_NUM.get().unwrap() {
             let random = fastrand::f32();
             new_agents.push(self.agents[
