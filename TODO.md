@@ -1,0 +1,12 @@
+# Things to do
+- Serde
+    - Save `State` and `DAC`
+- Vulkano
+    - Compute
+        - GPU Training
+    - Graphics
+        - Fix framerate
+        - Visualize neural network live
+- AI_Template
+    - Make most trait methods optional
+    - Add trait methods for neural net coloring, and overall displaying.
