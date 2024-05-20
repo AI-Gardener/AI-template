@@ -6,7 +6,7 @@ pub(crate) struct Agent<State: Reinforcement + Clone + Send + Sync> {
     pub(crate) score: f32,
     pub(crate) instant: f32,
 
-    pub(crate) state: State
+    pub(crate) state: State,
 }
 
 impl<State: Reinforcement + Clone + Send + Sync> Agent<State> {

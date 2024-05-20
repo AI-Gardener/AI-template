@@ -14,7 +14,14 @@ pub struct Node {
 
 impl Node {
     /// A new input node.
-    pub fn new(val: f32, bias: f32, activation_f: fn(f32) -> f32, parents: Vec<usize>, children: Vec<(usize, f32)>, layer: u32) -> Self {
+    pub fn new(
+        val: f32,
+        bias: f32,
+        activation_f: fn(f32) -> f32,
+        parents: Vec<usize>,
+        children: Vec<(usize, f32)>,
+        layer: u32,
+    ) -> Self {
         Self {
             val,
             bias,
