@@ -1,6 +1,9 @@
+use vulkano_macros::BufferContents;
+
 /// A 4x4 matrix
+/// The inner value is public, so you can create your own transformations, if you want to.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(BufferContents, Clone, Copy)]
 pub struct Mat4(pub [f32; 16]);
 
 impl std::fmt::Debug for Mat4 {

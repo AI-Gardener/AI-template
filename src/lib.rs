@@ -12,9 +12,7 @@ pub use ai::*;
 // Graphics
 mod vk;
 pub use vk::*;
-
-#[cfg(test)]
-mod test;
+pub use vulkano::swapchain::PresentMode;
 
 use once_cell::sync::OnceCell;
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
@@ -30,12 +28,16 @@ pub(crate) static NEWNODE_ACTIVATION_F: OnceCell<fn(f32) -> f32> = OnceCell::new
 /// While training, the implemented methods will (repeatedly) be called in the order:  
 /// ```
 /// state.set_inputs(&mut dac);
-/// // Here, run network.
+/// // Here, network is run.
 /// state.get_outputs(&dac);
 /// state.update_physics();
 /// state.update_score();
 /// ```
 pub trait Reinforcement {
+
+    // -------------------------------------------------- AI
+
+
     /// The number of agents per generation.
     ///
     /// This variable is read once when initializing AI. Modifying it after that will have no inner effect.
@@ -82,11 +84,11 @@ pub trait Reinforcement {
     fn get_outputs(&mut self, dac: &DAC);
 
     /// Updates the state values after getting the output.
-    fn update_physics(&mut self);
+    fn update_physics(&mut self);   // delta t
 
     /// Updates the score, reflecting how well the AI is doing at that instant.  
     /// The score should not end up negative.
-    fn update_score(&mut self, score: &mut f32);
+    fn update_score(&mut self, score: &mut f32);    // delta t
 
     /// Get a mutated version of this network.  
     ///
@@ -123,7 +125,22 @@ pub trait Reinforcement {
             dac.unmutated()
         }
     }
+    
 
-    /// Draws the current scene
-    fn render(&self);
+    // -------------------------------------------------- Drawing
+
+
+    /// Defines the vertices to be drawn, and, optionally, indices for the order in which to draw the vertices.
+    /// If `None` is returned for the indices, the vertices will be drawn in chunks of 3, as triangles.
+    fn draw_vertices() -> (Vec<InputVertex>, Option<Vec<u32>>);
+
+    /// Updates the transformation matrices used when drawing the scene, according to the current state.
+    fn draw_transformations(&self, matrices: &mut [Mat4; 128]);
+
+    // TODO These
+    // training_ups (up)
+    // draw_save_fps
+    fn draw_view_present_mode() -> PresentMode {
+        PresentMode::Fifo
+    }
 }
