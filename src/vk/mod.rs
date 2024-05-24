@@ -6,7 +6,7 @@ pub use matrix::*;
 use std::sync::Arc;
 use vulkano::{
     buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer}, command_buffer::{
-        allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo
+        allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, RenderPassBeginInfo
     }, descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet}, device::{
         physical::{PhysicalDevice, PhysicalDeviceType}, Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags
     }, format::Format, image::{view::ImageView, Image, ImageCreateInfo, ImageType, ImageUsage, SampleCount}, instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions}, memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator}, pipeline::{
@@ -67,14 +67,15 @@ struct VkInner<State: Reinforcement + Clone + Send + Sync>  {
     render_pass: Arc<RenderPass>,
     framebuffers: Vec<Arc<Framebuffer>>,
     drawing_pipeline: Arc<GraphicsPipeline>,
-    drawing_descriptor_set: [Arc<PersistentDescriptorSet>; MAX_IMAGES],
+    drawing_descriptor_set: Arc<PersistentDescriptorSet>,
     recreate_swapchain: bool,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
 
     vertices: Vec<InputVertex>,
     vertex_buffer: Subbuffer<[InputVertex]>,
     transformations: [Mat4; MAX_MATRICES],
-    transform_uniform: [Subbuffer<[Mat4]>; MAX_IMAGES],
+    staging_transform_uniform: Subbuffer<[Mat4]>,
+    transform_uniform: Subbuffer<[Mat4]>,
 
     state: State,
 }
@@ -115,11 +116,8 @@ mod vs {
         src: r"
             #version 450
 
-            struct ModelT {
-                mat4 mat;
-            };
             layout(set = 0, binding = 0) uniform ModelTransformations {
-                ModelT data[128];
+                mat4 data[128];
             } tf;
             layout(push_constant) uniform GeneralInfo {
                 int offset;
@@ -134,7 +132,7 @@ mod vs {
             void main() {
                 gl_Position = vec4(position, 1.0);
                 if (transform_id > -1) {
-                    gl_Position *= tf.data[gen.offset + transform_id].mat;
+                    gl_Position *= tf.data[gen.offset + transform_id];
                 }
                 v_color = color;
             }
@@ -436,12 +434,28 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
             vertices.clone(),
         )
         .unwrap();
-    
+
         let transformations = [Mat4::new(); MAX_MATRICES];
-        let transform_uniform: [Subbuffer<[Mat4]>; MAX_IMAGES] = [Buffer::new_slice(
+        let staging_transform_uniform: Subbuffer<[Mat4]> = Buffer::new_slice::<Mat4>(
             memory_allocator.clone(),
             BufferCreateInfo {
-                usage: BufferUsage::UNIFORM_BUFFER,
+                usage: BufferUsage::TRANSFER_SRC,
+                ..Default::default()
+            },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                ..Default::default()
+            },
+            // transformations.len() as u64,
+            MAX_MATRICES as u64,
+        )
+        .unwrap();
+        let transform_uniform: Subbuffer<[Mat4]> = Buffer::new_slice::<Mat4>(
+            memory_allocator.clone(),
+            BufferCreateInfo {
+                usage: BufferUsage::UNIFORM_BUFFER
+                    | BufferUsage::TRANSFER_DST,
                 ..Default::default()
             },
             AllocationCreateInfo {
@@ -452,9 +466,9 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
             // transformations.len() as u64,
             (MAX_MATRICES * MAX_IMAGES) as u64,
         )
-        .unwrap(); MAX_IMAGES];
+        .unwrap();
 
-        let drawing_descriptor_set: Arc<PersistentDescriptorSet> = PersistentDescriptorSet::new(
+        let drawing_descriptor_set = PersistentDescriptorSet::new(
             &ds_allocator,
             drawing_pipeline
                 .layout()
@@ -469,7 +483,7 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
         )
         .unwrap();
 
-    let state = State::init();
+        let state = State::init();
 
         Vk {
             event_loop,
@@ -506,14 +520,15 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
                 render_pass,
                 framebuffers,
                 drawing_pipeline,
-                drawing_descriptor_sets,
+                drawing_descriptor_set,
                 recreate_swapchain,
                 previous_frame_end,
 
                 vertices,
                 vertex_buffer,
                 transformations,
-                transform_uniforms,
+                staging_transform_uniform,
+                transform_uniform,
 
                 state,
             },
@@ -569,9 +584,9 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                         self.recreate_swapchain = true;
                     }
 
-                    let transform_uniform_offset = MAX_MATRICES * image_index as usize;
+                    let transform_uniform_offset = MAX_MATRICES as u32 * image_index;
                     {
-                        let mut write_guard = self.transform_uniform.;
+                        let mut write_guard = self.staging_transform_uniform.write().unwrap();
             
                         for (o, i) in write_guard.iter_mut().skip(transform_uniform_offset as usize).take(MAX_MATRICES).zip(self.transformations.iter()) {
                             *o = *i;
@@ -579,14 +594,40 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                     }
                     let push = Push { transform_uniform_offset };
 
-                    let mut builder = AutoCommandBufferBuilder::primary(
+                    let mut uniform_copy_cb_builder = AutoCommandBufferBuilder::primary(
                         &self.cb_allocator,
                         self.queue.queue_family_index(),
                         CommandBufferUsage::OneTimeSubmit,
                     )
                     .unwrap();
+                    uniform_copy_cb_builder
+                        .copy_buffer({
+                            let mut cbi = CopyBufferInfo::buffers(
+                                self.staging_transform_uniform.clone().into_bytes(),
+                                self.transform_uniform.clone().into_bytes(),
+                            );
+                            cbi.regions[0].dst_offset = (MAX_MATRICES * image_index as usize) as u64;
+                            cbi
+                        })
+                        .unwrap();
+                    let uniform_copy_command_buffer = uniform_copy_cb_builder.build().unwrap();
+
+                    sync::now(self.device.clone()).boxed()
+                        .then_execute(self.queue.clone(), uniform_copy_command_buffer)
+                        .unwrap()
+                        .then_signal_fence_and_flush()
+                        .unwrap()
+                        .wait(None)
+                        .unwrap();
+
                     // TODO Reuse command buffer
-                    builder
+                    let mut cb_builder = AutoCommandBufferBuilder::primary(
+                        &self.cb_allocator,
+                        self.queue.queue_family_index(),
+                        CommandBufferUsage::OneTimeSubmit,
+                    )
+                    .unwrap();
+                    cb_builder
                         .begin_render_pass(
                             RenderPassBeginInfo {
                                 clear_values: vec![
@@ -606,7 +647,7 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                             PipelineBindPoint::Graphics,
                             self.drawing_pipeline.layout().clone(),
                             0,
-                            self.drawing_descriptor_set.clone()
+                            self.drawing_descriptor_set.clone(),
                         )
                         .unwrap()
                         .push_constants(
@@ -619,8 +660,8 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                         .unwrap()
                         .end_render_pass(Default::default())
                         .unwrap();
-                    let command_buffer = builder.build().unwrap();
-
+                    let command_buffer = cb_builder.build().unwrap();
+                        
                     let future = self.previous_frame_end
                         .take()
                         .unwrap()
