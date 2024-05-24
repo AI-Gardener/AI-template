@@ -48,7 +48,7 @@ impl DAC {
     }
 
     /// Sets the node processing order, such that children are always processed aftertheir parents.
-    pub fn reordered(&mut self) {
+    pub(crate) fn reordered(&mut self) {
         // let start = std::time::Instant::now();
 
         let len = self.nodes.len();
@@ -87,7 +87,7 @@ impl DAC {
         })
     }
 
-    pub fn run(&mut self) {
+    pub(crate) fn run(&mut self) {
         // let start = std::time::Instant::now();
 
         let mut vals: Vec<f32> = self.nodes.iter().map(|node| node.val).collect();
