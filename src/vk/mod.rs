@@ -706,7 +706,7 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                             ImageCreateInfo {
                                 image_type: ImageType::Dim2d,
                                 format: self.image_format,
-                                extent: [self.window.inner_size().width, self.window.inner_size().width, 1],
+                                extent: [self.window.inner_size().width, self.window.inner_size().height, 1],
                                 usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSIENT_ATTACHMENT,
                                 samples: SampleCount::Sample8,
                                 ..Default::default()
