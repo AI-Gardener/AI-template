@@ -29,6 +29,10 @@ use winit::{
 const MAX_MATRICES: usize = 128;
 const MAX_IMAGES: usize = 16;
 
+
+// -------------------------------------------------- Structs
+
+
 pub struct Vk<State: Reinforcement + Clone + Send + Sync>  {
     event_loop: EventLoop<()>,
     inner: VkInner<State>,
@@ -73,6 +77,9 @@ struct VkInner<State: Reinforcement + Clone + Send + Sync>  {
 
     vertices: Vec<InputVertex>,
     vertex_buffer: Subbuffer<[InputVertex]>,
+    indexed: bool,
+    indices: Vec<u32>,
+    index_buffer: Subbuffer<[u32]>,
     transformations: [Mat4; MAX_MATRICES],
     staging_transform_uniform: Subbuffer<[Mat4]>,
     transform_uniform: Subbuffer<[Mat4]>,
@@ -109,6 +116,10 @@ pub(crate) struct Push {
     /// The offset of the transformations data in the dynamic transform_uniform buffer.
     pub(crate) transform_uniform_offset: u32,
 }
+
+
+// -------------------------------------------------- SHADERS
+
 
 mod vs {
     vulkano_shaders::shader! {
@@ -157,6 +168,10 @@ mod fs {
     }
 }
 
+
+// -------------------------------------------------- Vk
+
+
 impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
     pub fn init() -> Self {
         let event_loop = EventLoop::new();
@@ -181,7 +196,7 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
             .with_decorations(true)
             .with_inner_size(Size::Logical(LogicalSize::from([1280, 720])))
             .with_resizable(true)
-            .with_title("RENAME ME")
+            .with_title("AI Agent 007 or so")
             .with_transparent(true)
             .build(&event_loop)
             .unwrap()
@@ -419,7 +434,7 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
 
         // --------------------------------------------------
     
-        let vertices = State::draw_vertices().0;
+        let (vertices, indices) = State::draw_vertices();
         let vertex_buffer = Buffer::from_iter(
             memory_allocator.clone(),
             BufferCreateInfo {
@@ -432,6 +447,26 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
                 ..Default::default()
             },
             vertices.clone(),
+        )
+        .unwrap();
+
+        let indexed = indices.is_some();
+        let indices = match indices {
+            Some(ind) => ind,
+            None => (0..10).into_iter().collect(),
+        };
+        let index_buffer = Buffer::from_iter(
+            memory_allocator.clone(),
+            BufferCreateInfo {
+                usage: BufferUsage::INDEX_BUFFER,
+                ..Default::default()
+            },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                ..Default::default()
+            },
+            indices.clone(),
         )
         .unwrap();
 
@@ -526,6 +561,9 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
 
                 vertices,
                 vertex_buffer,
+                indexed,
+                indices,
+                index_buffer,
                 transformations,
                 staging_transform_uniform,
                 transform_uniform,
@@ -641,8 +679,6 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                         .unwrap()
                         .bind_pipeline_graphics(self.drawing_pipeline.clone())
                         .unwrap()
-                        .bind_vertex_buffers(0, self.vertex_buffer.clone())
-                        .unwrap()
                         .bind_descriptor_sets(
                             PipelineBindPoint::Graphics,
                             self.drawing_pipeline.layout().clone(),
@@ -656,8 +692,19 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                             push
                         )
                         .unwrap()
+                        .bind_vertex_buffers(0, self.vertex_buffer.clone())
+                        .unwrap();
+                    if self.indexed {
+                        cb_builder
+                        .bind_index_buffer(self.index_buffer.clone())
+                        .unwrap()
+                        .draw_indexed(self.index_buffer.len() as u32, 1, 0, 0, 0)
+                        .unwrap()
+                    } else {
+                        cb_builder
                         .draw(self.vertex_buffer.len() as u32, 1, 0, 0)
                         .unwrap()
+                    }
                         .end_render_pass(Default::default())
                         .unwrap();
                     let command_buffer = cb_builder.build().unwrap();
