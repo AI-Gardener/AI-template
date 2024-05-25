@@ -7,6 +7,8 @@
 
 // AI
 mod ai;
+use std::f32::consts::PI;
+
 pub use ai::*;
 
 // Graphics
@@ -132,10 +134,28 @@ pub trait Reinforcement {
 
     /// Defines the vertices to be drawn, and, optionally, indices for the order in which to draw the vertices.
     /// If `None` is returned for the indices, the vertices will be drawn in chunks of 3, as triangles.
-    fn draw_vertices() -> (Vec<InputVertex>, Option<Vec<u32>>);
+    fn draw_vertices() -> (Vec<InputVertex>, Option<Vec<u32>>) {
+        (
+            vec![
+                InputVertex::new([1.0, 0.0, 0.0, 1.0], [-0.5,  0.5,  0.0], 0),
+                InputVertex::new([0.0, 1.0, 0.0, 1.0], [ 0.0,  0.0,  0.0], 0),
+                InputVertex::new([0.0, 0.0, 1.0, 1.0], [ 0.5,  0.5,  0.0], 0),
+                InputVertex::new([0.0, 0.0, 0.0, 1.0], [ 0.0, -1.0,  0.0], 0),
+            ],
+            Some(vec![
+                0, 1, 2,
+                0, 1, 3,
+                2, 1, 3,
+            ]),
+        )
+    }
 
     /// Updates the transformation matrices used when drawing the scene, according to the current state.
-    fn draw_transformations(&self, matrices: &mut [Mat4; 128]);
+    #[allow(unused_variables)]
+    fn draw_transformations(&self, matrices: &mut [Mat4; 128]) {
+        let transform = Mat4::rotate_z(PI * 2.0 * fastrand::f32());
+        matrices[0] = transform;
+    }
 
     // TODO These
     // training_ups (up)
@@ -144,3 +164,8 @@ pub trait Reinforcement {
         PresentMode::Fifo
     }
 }
+
+// TODO NOW Fix 1/2 frames working.
+// TODO NOW Fix Mat4 for Vulkan
+// TODO NOW Orthogonal plane
+// TODO NOW Load model in user app.
