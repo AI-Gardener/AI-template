@@ -152,7 +152,7 @@ pub trait Reinforcement {
 
     /// Updates the transformation matrices used when drawing the scene, according to the current state.
     #[allow(unused_variables)]
-    fn draw_transformations(&self, matrices: &mut [Mat4; 128]) {
+    fn draw_transformations(&self, matrices: &mut [Mat4; 32]) {
         let transform = Mat4::rotate_z(PI * 2.0 * fastrand::f32());
         matrices[0] = transform;
     }
@@ -165,7 +165,5 @@ pub trait Reinforcement {
     }
 }
 
-// TODO NOW Fix 1/2 frames working.
 // TODO NOW Fix Mat4 for Vulkan
-// TODO NOW Orthogonal plane
 // TODO NOW Load model in user app.

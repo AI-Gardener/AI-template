@@ -26,8 +26,13 @@ use vulkano::{
 use winit::{
     dpi::{LogicalSize, Size}, event::{Event, WindowEvent}, event_loop::{ControlFlow, EventLoop}, platform::run_return::EventLoopExtRunReturn, window::{Window, WindowBuilder}
 };
-const MAX_MATRICES: usize = 128;
-const MAX_IMAGES: usize = 16;
+
+// Always-supported uniform range: 16384 bytes. [From here](https://docs.vulkan.org/spec/latest/chapters/limits.html)
+// 1 Mat4: 64 bytes
+// 8 images for the swapchain should be enough, leaving 32 matrices per uniform.
+// 64 bytes per matrix * 32 matrices per uniform * 8 uniforms total = 16384 bytes
+const MAX_MATRICES: usize = 32;
+const MAX_UNIFORM_BUFFERS: usize = 8;
 
 
 // -------------------------------------------------- Structs
@@ -71,7 +76,7 @@ struct VkInner<State: Reinforcement + Clone + Send + Sync>  {
     render_pass: Arc<RenderPass>,
     framebuffers: Vec<Arc<Framebuffer>>,
     drawing_pipeline: Arc<GraphicsPipeline>,
-    drawing_descriptor_set: Arc<PersistentDescriptorSet>,
+    drawing_descriptor_sets: Vec<Arc<PersistentDescriptorSet>>,
     recreate_swapchain: bool,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
 
@@ -82,7 +87,7 @@ struct VkInner<State: Reinforcement + Clone + Send + Sync>  {
     index_buffer: Subbuffer<[u32]>,
     transformations: [Mat4; MAX_MATRICES],
     staging_transform_uniform: Subbuffer<[Mat4]>,
-    transform_uniform: Subbuffer<[Mat4]>,
+    transform_uniforms: Vec<Subbuffer<[Mat4]>>,
 
     state: State,
 }
@@ -100,6 +105,7 @@ pub struct InputVertex {
 }
 
 impl InputVertex {
+    /// `transform_id`: if this is negative, the vertex won't be transformed.
     pub fn new(color: [f32; 4], position: [f32; 3], transform_id: i32) -> Self {
         Self {
             color,
@@ -113,8 +119,7 @@ impl InputVertex {
 #[derive(Debug, Clone, BufferContents)]
 #[repr(C)]
 pub(crate) struct Push {
-    /// The offset of the transformations data in the dynamic transform_uniform buffer.
-    pub(crate) transform_uniform_offset: u32,
+    pub(crate) hw_ratio: f32,
 }
 
 
@@ -128,10 +133,10 @@ mod vs {
             #version 450
 
             layout(set = 0, binding = 0) uniform ModelTransformations {
-                mat4 data[128];
+                mat4 data[32];
             } tf;
             layout(push_constant) uniform GeneralInfo {
-                int offset;
+                float hw_ratio;
             } gen;
 
             layout(location = 0) in vec4 color;
@@ -141,10 +146,15 @@ mod vs {
             layout(location = 0) out vec4 v_color;
 
             void main() {
+                // Vertex
                 gl_Position = vec4(position, 1.0);
+                // Model
                 if (transform_id > -1) {
-                    gl_Position *= tf.data[gen.offset + transform_id];
+                    gl_Position *= tf.data[transform_id];
                 }
+                // View
+                gl_Position.x *= gen.hw_ratio;
+
                 v_color = color;
             }
         ",
@@ -291,8 +301,10 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
             .physical_device()
             .surface_capabilities(&surface, Default::default())
             .unwrap();
-        let min_image_count = surface_capabilities.min_image_count.max(2);
+        let min_image_count = surface_capabilities.min_image_count.max(8);
         println!("Max image count is {:?}", surface_capabilities.max_image_count);
+        println!("max_uniform_buffer_range is {:?}", device.physical_device().properties().max_uniform_buffer_range);
+        println!("max_descriptor_set_uniform_buffers is {:?}", device.physical_device().properties().max_descriptor_set_uniform_buffers);
         let image_format = device
             .physical_device()
             .surface_formats(&surface, Default::default())
@@ -486,7 +498,7 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
             MAX_MATRICES as u64,
         )
         .unwrap();
-        let transform_uniform: Subbuffer<[Mat4]> = Buffer::new_slice::<Mat4>(
+        let transform_uniforms: Vec<Subbuffer<[Mat4]>> = (0..MAX_UNIFORM_BUFFERS).map(|_| Buffer::new_slice::<Mat4>(
             memory_allocator.clone(),
             BufferCreateInfo {
                 usage: BufferUsage::UNIFORM_BUFFER
@@ -499,11 +511,11 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
                 ..Default::default()
             },
             // transformations.len() as u64,
-            (MAX_MATRICES * MAX_IMAGES) as u64,
+            MAX_MATRICES as u64,
         )
-        .unwrap();
+        .unwrap()).collect();
 
-        let drawing_descriptor_set = PersistentDescriptorSet::new(
+        let drawing_descriptor_sets = (0..MAX_UNIFORM_BUFFERS).map(|n| PersistentDescriptorSet::new(
             &ds_allocator,
             drawing_pipeline
                 .layout()
@@ -512,11 +524,11 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
                 .unwrap()
                 .clone(),
             [
-                WriteDescriptorSet::buffer(0, transform_uniform.clone()),
+                WriteDescriptorSet::buffer(0, transform_uniforms[n].clone()),
             ],
             [],
         )
-        .unwrap();
+        .unwrap()).collect();
 
         let state = State::init();
 
@@ -555,7 +567,7 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
                 render_pass,
                 framebuffers,
                 drawing_pipeline,
-                drawing_descriptor_set,
+                drawing_descriptor_sets,
                 recreate_swapchain,
                 previous_frame_end,
 
@@ -566,7 +578,7 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
                 index_buffer,
                 transformations,
                 staging_transform_uniform,
-                transform_uniform,
+                transform_uniforms,
 
                 state,
             },
@@ -621,16 +633,22 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                     if suboptimal {
                         self.recreate_swapchain = true;
                     }
+                    if image_index > MAX_UNIFORM_BUFFERS as u32 {
+                        println!("\nTHERE ARE MORE SWAPCHAIN IMAGES THAN UNIFORM DESCRIPTORS\nimages_index: {}\n MAX_UNIFORM_BUFFERS: {}", image_index, MAX_UNIFORM_BUFFERS);
+                    }
 
-                    let transform_uniform_offset = MAX_MATRICES as u32 * image_index;
+                    // TODO Less buffers? Less desciptors? Less descriptor updates?
+                    // let transform_uniform_offset = MAX_MATRICES as u32 * image_index;
                     {
                         let mut write_guard = self.staging_transform_uniform.write().unwrap();
             
-                        for (o, i) in write_guard.iter_mut().skip(transform_uniform_offset as usize).take(MAX_MATRICES).zip(self.transformations.iter()) {
+                        for (o, i) in write_guard.iter_mut().zip(self.transformations.iter()) {
                             *o = *i;
                         }
                     }
-                    let push = Push { transform_uniform_offset };
+                    let push = Push {
+                        hw_ratio: self.window.inner_size().height as f32 / self.window.inner_size().width as f32,
+                    };
 
                     let mut uniform_copy_cb_builder = AutoCommandBufferBuilder::primary(
                         &self.cb_allocator,
@@ -639,14 +657,11 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                     )
                     .unwrap();
                     uniform_copy_cb_builder
-                        .copy_buffer({
-                            let mut cbi = CopyBufferInfo::buffers(
+                        .copy_buffer(CopyBufferInfo::buffers(
                                 self.staging_transform_uniform.clone().into_bytes(),
-                                self.transform_uniform.clone().into_bytes(),
-                            );
-                            cbi.regions[0].dst_offset = (MAX_MATRICES * image_index as usize) as u64;
-                            cbi
-                        })
+                                self.transform_uniforms[image_index as usize].clone().into_bytes(),
+                            )
+                        )
                         .unwrap();
                     let uniform_copy_command_buffer = uniform_copy_cb_builder.build().unwrap();
 
@@ -683,7 +698,7 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                             PipelineBindPoint::Graphics,
                             self.drawing_pipeline.layout().clone(),
                             0,
-                            self.drawing_descriptor_set.clone(),
+                            self.drawing_descriptor_sets[image_index as usize].clone(),
                         )
                         .unwrap()
                         .push_constants(
