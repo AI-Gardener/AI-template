@@ -61,7 +61,7 @@ pub trait Reinforcement {
         60 * 10
     }
 
-    /// The duration of a tick, and the difference in time between 2 consecutive updates, Delta time.
+    /// The duration of a tick, and the difference in time between 2 consecutive training updates, Delta time.
     ///
     /// This variable is read once when initializing AI. Modifying it after that will have no inner effect.
     fn tick_duration() -> f32 {
@@ -86,11 +86,11 @@ pub trait Reinforcement {
     fn get_outputs(&mut self, dac: &DAC);
 
     /// Updates the state values after getting the output.
-    fn update_physics(&mut self);   // delta t
+    fn update_physics(&mut self, delta_t: f32);   // delta t
 
     /// Updates the score, reflecting how well the AI is doing at that instant.  
     /// The score should not end up negative.
-    fn update_score(&mut self, score: &mut f32);    // delta t
+    fn update_score(&mut self, score: &mut f32, delta_t: f32);    // delta t
 
     /// Get a mutated version of this network.  
     ///
@@ -158,12 +158,8 @@ pub trait Reinforcement {
     }
 
     // TODO These
-    // training_ups (up)
     // draw_save_fps
     fn draw_view_present_mode() -> PresentMode {
         PresentMode::Fifo
     }
 }
-
-// TODO NOW Fix Mat4 for Vulkan
-// TODO NOW Load model in user app.

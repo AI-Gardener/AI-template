@@ -3,7 +3,7 @@ use super::*;
 mod matrix;
 pub use matrix::*;
 
-use std::sync::Arc;
+use std::{hash::{Hash, Hasher}, sync::Arc, time::Instant};
 use vulkano::{
     buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer}, command_buffer::{
         allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, RenderPassBeginInfo
@@ -11,13 +11,7 @@ use vulkano::{
         physical::{PhysicalDevice, PhysicalDeviceType}, Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags
     }, format::Format, image::{view::ImageView, Image, ImageCreateInfo, ImageType, ImageUsage, SampleCount}, instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions}, memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator}, pipeline::{
         graphics::{
-            color_blend::{ColorBlendAttachmentState, ColorBlendState},
-            input_assembly::InputAssemblyState,
-            multisample::MultisampleState,
-            rasterization::RasterizationState,
-            vertex_input::{Vertex, VertexDefinition},
-            viewport::{Viewport, ViewportState},
-            GraphicsPipelineCreateInfo,
+            color_blend::{ColorBlendAttachmentState, ColorBlendState}, depth_stencil::{DepthState, DepthStencilState}, input_assembly::InputAssemblyState, multisample::MultisampleState, rasterization::RasterizationState, vertex_input::{Vertex, VertexDefinition}, viewport::{Viewport, ViewportState}, GraphicsPipelineCreateInfo
         }, layout::PipelineDescriptorSetLayoutCreateInfo, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo
     }, render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass}, shader::EntryPoint, swapchain::{
         acquire_next_image, CompositeAlpha, PresentMode, Surface, SurfaceCapabilities, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo
@@ -38,12 +32,12 @@ const MAX_UNIFORM_BUFFERS: usize = 8;
 // -------------------------------------------------- Structs
 
 
-pub struct Vk<State: Reinforcement + Clone + Send + Sync>  {
+pub struct Vk  {
     event_loop: EventLoop<()>,
-    inner: VkInner<State>,
+    inner: VkInner,
 }
 #[allow(unused)]
-struct VkInner<State: Reinforcement + Clone + Send + Sync>  {
+struct VkInner  {
     library: Arc<vulkano::VulkanLibrary>,
     instance_extensions: InstanceExtensions,
     instance: Arc<Instance>,
@@ -71,6 +65,7 @@ struct VkInner<State: Reinforcement + Clone + Send + Sync>  {
     present_mode: PresentMode,
 
     msaa_image: Arc<ImageView>,
+    depth_image: Arc<ImageView>,
     images: Vec<Arc<Image>>,
     swapchain: Arc<Swapchain>,
     render_pass: Arc<RenderPass>,
@@ -88,12 +83,10 @@ struct VkInner<State: Reinforcement + Clone + Send + Sync>  {
     transformations: [Mat4; MAX_MATRICES],
     staging_transform_uniform: Subbuffer<[Mat4]>,
     transform_uniforms: Vec<Subbuffer<[Mat4]>>,
-
-    state: State,
 }
 
 /// A single vertex, part of a triangle that will be drawn
-#[derive(BufferContents, Vertex, Clone)]
+#[derive(BufferContents, Vertex, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct InputVertex {
     #[format(R32G32B32A32_SFLOAT)]
@@ -102,6 +95,21 @@ pub struct InputVertex {
     position: [f32; 3],
     #[format(R32_SINT)]
     transform_id: i32,
+}
+
+impl Eq for InputVertex {}
+
+impl Hash for InputVertex {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.color[0].to_bits().hash(state);
+        self.color[1].to_bits().hash(state);
+        self.color[2].to_bits().hash(state);
+        self.color[3].to_bits().hash(state);
+        self.position[0].to_bits().hash(state);
+        self.position[1].to_bits().hash(state);
+        self.position[2].to_bits().hash(state);
+        self.transform_id.hash(state);
+    }
 }
 
 impl InputVertex {
@@ -182,8 +190,8 @@ mod fs {
 // -------------------------------------------------- Vk
 
 
-impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
-    pub fn init() -> Self {
+impl Vk {
+    pub fn init<State: Reinforcement + Clone + Send + Sync>() -> Self {
         let event_loop = EventLoop::new();
 
         // --------------------------------------------------
@@ -320,22 +328,7 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
         // --------------------------------------------------
 
     
-        let (msaa_image, (swapchain, images)) = (
-            ImageView::new_default(
-                Image::new(
-                    memory_allocator.clone(),
-                    ImageCreateInfo {
-                        image_type: ImageType::Dim2d,
-                        format: image_format,
-                        extent: [window.inner_size().width, window.inner_size().width, 1],
-                        usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSIENT_ATTACHMENT,
-                        samples: SampleCount::Sample8,
-                        ..Default::default()
-                    },
-                    AllocationCreateInfo::default(),
-                )
-                .unwrap(),
-            ).unwrap(),
+        let ((swapchain, images), msaa_image, depth_image) = (
             Swapchain::new(
                 device.clone(),
                 surface.clone(),
@@ -352,7 +345,37 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
     
                     ..Default::default()
                 },
-            ).unwrap()
+            ).unwrap(),
+            ImageView::new_default(
+                Image::new(
+                    memory_allocator.clone(),
+                    ImageCreateInfo {
+                        image_type: ImageType::Dim2d,
+                        format: image_format,
+                        extent: [window.inner_size().width, window.inner_size().width, 1],
+                        usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSIENT_ATTACHMENT,
+                        samples: SampleCount::Sample8,
+                        ..Default::default()
+                    },
+                    AllocationCreateInfo::default(),
+                )
+                .unwrap(),
+            ).unwrap(),
+            ImageView::new_default(
+                Image::new(
+                    memory_allocator.clone(),
+                    ImageCreateInfo {
+                        image_type: ImageType::Dim2d,
+                        format: Format::D16_UNORM,
+                        extent: [window.inner_size().width, window.inner_size().width, 1],
+                        usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::TRANSIENT_ATTACHMENT,
+                        samples: SampleCount::Sample8,
+                        ..Default::default()
+                    },
+                    AllocationCreateInfo::default(),
+                )
+                .unwrap(),
+            ).unwrap(),
         );
         let render_pass = vulkano::single_pass_renderpass!(
             device.clone(),
@@ -369,11 +392,17 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
                     load_op: DontCare,
                     store_op: Store,
                 },
+                msaa_depth_stencil: {
+                    format: Format::D16_UNORM,
+                    samples: 8,
+                    load_op: Clear,
+                    store_op: DontCare,
+                },
             },
             pass: {
                 color: [msaa_color],
                 color_resolve: [color],
-                depth_stencil: {},
+                depth_stencil: {msaa_depth_stencil},
             },
         )
         .unwrap();
@@ -384,7 +413,7 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
                 Framebuffer::new(
                     render_pass.clone(),
                     FramebufferCreateInfo {
-                        attachments: vec![msaa_image.clone(), view],
+                        attachments: vec![msaa_image.clone(), view, depth_image.clone()],
                         ..Default::default()
                     },
                 )
@@ -436,6 +465,10 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
                         ColorBlendAttachmentState::default(),
                     )),
                     subpass: Some(subpass.into()),
+                    depth_stencil_state: Some(DepthStencilState {
+                        depth: Some(DepthState::simple()),
+                        ..Default::default()
+                    }),
                     ..GraphicsPipelineCreateInfo::layout(layout)
                 },
             )
@@ -530,8 +563,6 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
         )
         .unwrap()).collect();
 
-        let state = State::init();
-
         Vk {
             event_loop,
             inner: VkInner {
@@ -562,6 +593,7 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
                 present_mode,
 
                 msaa_image,
+                depth_image,
                 images,
                 swapchain,
                 render_pass,
@@ -579,14 +611,12 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
                 transformations,
                 staging_transform_uniform,
                 transform_uniforms,
-
-                state,
             },
         }
     }
 
-    pub fn view(&mut self) {
-        self.inner.view(&mut self.event_loop);
+    pub fn view_agent<State: Reinforcement + Clone + Send + Sync>(&mut self, agent: Agent<State>) {
+        self.inner.view(&mut self.event_loop, agent);
     }
 
     pub fn save(&mut self) {
@@ -594,9 +624,12 @@ impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
     }
 }
 
-impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
-    fn view(&mut self, event_loop: &mut EventLoop<()>) {
+impl VkInner {
+    fn view<State: Reinforcement + Clone + Send + Sync>(&mut self, event_loop: &mut EventLoop<()>, mut agent: Agent<State>) {
+        agent.dac.reordered();
         let mut count = 0;
+        // let start_time = Instant::now();
+        let mut last_time = Instant::now();
         event_loop.run_return(move |event, _, control_flow| {
             match event {
                 Event::WindowEvent {
@@ -618,8 +651,11 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                     }
                     self.recreate_swapchain(image_extent);
                     self.previous_frame_end.as_mut().unwrap().cleanup_finished();
-                    
-                    self.state.draw_transformations(&mut self.transformations);
+
+                    let delta_t = last_time.elapsed();
+                    agent.evaluate_step(delta_t.as_secs_f32());
+                    last_time += delta_t;
+                    agent.state.draw_transformations(&mut self.transformations);
 
                     let (image_index, suboptimal, acquire_future) =
                         match acquire_next_image(self.swapchain.clone(), None).map_err(Validated::unwrap) {
@@ -686,6 +722,7 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                                 clear_values: vec![
                                     Some([0.5, 0.5, 0.5, 0.5].into()),
                                     None,
+                                    Some(1.0.into()),
                                 ],
                                 ..RenderPassBeginInfo::framebuffer(self.framebuffers[image_index as usize].clone())
                             },
@@ -760,8 +797,14 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
         if self.recreate_swapchain {
             self.recreate_swapchain = false;
 
-            (self.msaa_image, (self.swapchain, self.images)) = {
+            ((self.swapchain, self.images), self.msaa_image, self.depth_image) = {
                 (
+                    self.swapchain
+                        .recreate(SwapchainCreateInfo {
+                            image_extent,
+                            ..self.swapchain.create_info()
+                        })
+                    .expect("failed to recreate swapchain"),
                     ImageView::new_default(
                         Image::new(
                             self.memory_allocator.clone(),
@@ -777,12 +820,21 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                         )
                         .unwrap(),
                     ).unwrap(),
-                    self.swapchain
-                        .recreate(SwapchainCreateInfo {
-                            image_extent,
-                            ..self.swapchain.create_info()
-                        })
-                        .expect("failed to recreate swapchain")
+                    ImageView::new_default(
+                        Image::new(
+                            self.memory_allocator.clone(),
+                            ImageCreateInfo {
+                                image_type: ImageType::Dim2d,
+                                format: Format::D16_UNORM,
+                                extent: [self.window.inner_size().width, self.window.inner_size().height, 1],
+                                usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::TRANSIENT_ATTACHMENT,
+                                samples: SampleCount::Sample8,
+                                ..Default::default()
+                            },
+                            AllocationCreateInfo::default(),
+                        )
+                        .unwrap(),
+                    ).unwrap(),
                 )
             };
 
@@ -793,7 +845,7 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                     Framebuffer::new(
                         self.render_pass.clone(),
                         FramebufferCreateInfo {
-                            attachments: vec![self.msaa_image.clone(), view],
+                            attachments: vec![self.msaa_image.clone(), view, self.depth_image.clone()],
                             ..Default::default()
                         },
                     )
@@ -846,6 +898,10 @@ impl<State: Reinforcement + Clone + Send + Sync> VkInner<State> {
                             ColorBlendAttachmentState::default(),
                         )),
                         subpass: Some(subpass.into()),
+                        depth_stencil_state: Some(DepthStencilState {
+                            depth: Some(DepthState::simple()),
+                            ..Default::default()
+                        }),
                         ..GraphicsPipelineCreateInfo::layout(layout)
                     },
                 )

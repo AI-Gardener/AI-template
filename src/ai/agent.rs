@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Clone)]
-pub(crate) struct Agent<State: Reinforcement + Clone + Send + Sync> {
+pub struct Agent<State: Reinforcement + Clone + Send + Sync> {
     pub(crate) dac: DAC,
     pub(crate) score: f32,
     pub(crate) instant: f32,
@@ -35,20 +35,20 @@ impl<State: Reinforcement + Clone + Send + Sync> Agent<State> {
         self.score = 0.1;
         self.dac.reordered();
         for _ in 0..*TICKS_PER_EVALUATION.get().unwrap() {
-            self.evaluate_step();
+            self.evaluate_step(*TICK_DURATION.get().unwrap());
         }
     }
 
-    pub(crate) fn evaluate_step(&mut self) {
+    pub(crate) fn evaluate_step(&mut self, delta_t: f32) {
         self.dac.zeroed();
 
         self.state.set_inputs(&mut self.dac);
         self.dac.run();
         self.state.get_outputs(&self.dac);
 
-        self.state.update_physics();
-        self.state.update_score(&mut self.score);
+        self.state.update_physics(delta_t);
+        self.state.update_score(&mut self.score, delta_t);
 
-        self.instant += TICK_DURATION.get().unwrap();
+        self.instant += delta_t;
     }
 }
