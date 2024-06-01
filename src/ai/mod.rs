@@ -51,12 +51,20 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
         self.evaluate();
         self.sort();
     }
+
+    // /// Checks the latest score is the best score.
+    // pub fn check(&self) {
+    //     assert!(
+    //         self.past_agents
+    //             .iter()
+    //             .map(|generation_agents| generation_agents[0].score)
+    //             .all(|score| score <= self.agents[0].score)
+    //     );
+    // }
     
     // TODO Interface only in `Vk`.
     pub fn best_agent(&self) -> Agent<State> {
-        let best_agent = self.agents
-            .iter().nth(0).unwrap()
-            .clone();
+        let best_agent = self.agents[0].clone();
         println!("Best DAC network: {:?}\nBest DAC network score: {}.\nDisplaying the evaluation...", best_agent.dac, best_agent.score);
         Agent {
             dac: best_agent.dac,
