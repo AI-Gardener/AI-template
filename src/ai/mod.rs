@@ -7,8 +7,6 @@ mod dac;
 pub use dac::*;
 mod node;
 pub use node::*;
-mod functions;
-pub use functions::*;
 
 /// Top-level of the training process
 pub struct AI<State: Reinforcement + Clone + Send + Sync> {
@@ -21,14 +19,16 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
     pub fn init() -> Self {
         AGENTS_NUM.set(State::num_agents()).unwrap();
         NUM_GENERATIONS.set(State::num_generations()).unwrap();
-        TICKS_PER_EVALUATION
-            .set(State::ticks_per_evaluation())
-            .unwrap();
+        TICKS_PER_EVALUATION.set(State::ticks_per_evaluation()).unwrap();
         TICK_DURATION.set(State::tick_duration()).unwrap();
         START_NODES.set(State::start_nodes()).unwrap();
-        NEWNODE_ACTIVATION_F
-            .set(State::newnode_activation_f())
-            .unwrap();
+        NEWNODE_ACTIVATION_FUNCTION.set(State::newnode_activation_function()).unwrap();
+        CUSTOM_ACTIVATION_F1.set(State::custom_activation_f1()).unwrap();
+        CUSTOM_ACTIVATION_F2.set(State::custom_activation_f2()).unwrap();
+        CUSTOM_ACTIVATION_F3.set(State::custom_activation_f3()).unwrap();
+        CUSTOM_ACTIVATION_F4.set(State::custom_activation_f4()).unwrap();
+        CUSTOM_ACTIVATION_F5.set(State::custom_activation_f5()).unwrap();
+
         Self {
             agents: (0..*AGENTS_NUM.get().unwrap())
                 .map(|_| Agent::new())
@@ -39,7 +39,7 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
 
     /// Trains the AI
     pub fn train(&mut self) {
-        (1..*NUM_GENERATIONS.get().unwrap())
+        (0..*NUM_GENERATIONS.get().unwrap())
             .into_iter()
             .for_each(|gen| {
                 println!("Testing generation {}...", gen);
@@ -47,27 +47,33 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
                 self.sort();
                 self.next_gen();
             });
-        println!("Testing generation {}...", *NUM_GENERATIONS.get().unwrap());
-        self.evaluate();
-        self.sort();
     }
 
-    // /// Checks the latest score is the best score.
-    // pub fn check(&self) {
-    //     assert!(
-    //         self.past_agents
-    //             .iter()
-    //             .map(|generation_agents| generation_agents[0].score)
-    //             .all(|score| score <= self.agents[0].score)
-    //     );
-    // }
+    /// Checks the latest score is the best score.
+    pub fn check(&self) {
+        assert!(
+            self.past_agents
+                .iter()
+                .map(|generation_agents| generation_agents[0].score)
+                .all(|score| score <= self.agents[0].score)
+        );
+    }
     
     // TODO Interface only in `Vk`.
-    pub fn best_agent(&self) -> Agent<State> {
-        let best_agent = self.agents[0].clone();
+    pub fn best_agent_latest(&self) -> Agent<State> {
+        let best_agent = self.past_agents.last().unwrap()[0].clone();
         println!("Best DAC network: {:?}\nBest DAC network score: {}.\nDisplaying the evaluation...", best_agent.dac, best_agent.score);
         Agent {
             dac: best_agent.dac,
+            ..Agent::new()
+        }
+    }
+
+    pub fn best_agent_at(&self, generation: usize) -> Agent<State> {
+        let agent = self.past_agents[generation][0].clone();
+        println!("Best DAC network: {:?}\nBest DAC network score: {}.\nDisplaying the evaluation...", agent.dac, agent.score);
+        Agent {
+            dac: agent.dac,
             ..Agent::new()
         }
     }

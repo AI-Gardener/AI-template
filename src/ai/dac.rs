@@ -8,21 +8,6 @@ pub struct DAC {
 }
 
 impl DAC {
-    // /// The constructor for the pendulum network in [Pezzza's video](https://www.youtube.com/watch?v=EvV5Qtp_fYg)
-    // fn pezzzas_pendulum() -> Self {
-    //     Self {
-    //         nodes: vec![
-    //             Box::new(Node::new(0.0, 0.0, identity, vec![], vec![], 0)), // Cart x
-    //             Box::new(Node::new(0.0, 0.0, identity, vec![], vec![], 0)), // Pendulum x
-    //             Box::new(Node::new(0.0, 0.0, identity, vec![], vec![], 0)), // Pendulum y
-    //             Box::new(Node::new(0.0, 0.0, identity, vec![], vec![], 0)), // Angular velocity
-
-    //             Box::new(Node::new(0.0, 0.0, tanh, vec![], vec![], 1)),
-    //         ],
-    //         order: vec![],
-    //     }
-    // }
-
     pub(crate) fn new(nodes: Vec<Box<Node>>) -> Self {
         Self {
             order: Vec::with_capacity(nodes.len()),
@@ -203,8 +188,7 @@ impl DAC {
 
         new.nodes.push(Box::new(Node::new(
             0.0,
-            0.0,
-            *NEWNODE_ACTIVATION_F.get().unwrap(),
+            *NEWNODE_ACTIVATION_FUNCTION.get().unwrap(),
             vec![connection_parent_i],
             vec![(connection_child_i, connection_weight)],
             new_node_layer,

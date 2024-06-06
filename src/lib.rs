@@ -3,12 +3,16 @@
 //!
 //! This top-level file contains the crate interface, imports and reexports.
 
-// TODO everything private, like Agent. Except maybe AI.
+// Imports -----
+
+use std::f32::consts::PI;
+use once_cell::sync::OnceCell;
+use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
+
+// Modules -----
 
 // AI
 mod ai;
-use std::f32::consts::PI;
-
 pub use ai::*;
 
 // Graphics
@@ -16,15 +20,19 @@ mod vk;
 pub use vk::*;
 pub use vulkano::swapchain::PresentMode;
 
-use once_cell::sync::OnceCell;
-use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
+// Library ----- 
 
 pub(crate) static AGENTS_NUM: OnceCell<usize> = OnceCell::new();
 pub(crate) static NUM_GENERATIONS: OnceCell<usize> = OnceCell::new();
 pub(crate) static TICKS_PER_EVALUATION: OnceCell<usize> = OnceCell::new(); // 10 seconds
 pub(crate) static TICK_DURATION: OnceCell<f32> = OnceCell::new(); // 60 modifications per second
 pub(crate) static START_NODES: OnceCell<Vec<Box<Node>>> = OnceCell::new();
-pub(crate) static NEWNODE_ACTIVATION_F: OnceCell<fn(f32) -> f32> = OnceCell::new();
+pub(crate) static NEWNODE_ACTIVATION_FUNCTION: OnceCell<ActivationFunction> = OnceCell::new();
+pub(crate) static CUSTOM_ACTIVATION_F1: OnceCell<fn(f32) -> f32> = OnceCell::new();
+pub(crate) static CUSTOM_ACTIVATION_F2: OnceCell<fn(f32) -> f32> = OnceCell::new();
+pub(crate) static CUSTOM_ACTIVATION_F3: OnceCell<fn(f32) -> f32> = OnceCell::new();
+pub(crate) static CUSTOM_ACTIVATION_F4: OnceCell<fn(f32) -> f32> = OnceCell::new();
+pub(crate) static CUSTOM_ACTIVATION_F5: OnceCell<fn(f32) -> f32> = OnceCell::new();
 
 /// This trait must be implemented for your state struct (a struct with fields used for the training).  
 /// While training, the implemented methods will (repeatedly) be called in the order:  
@@ -74,7 +82,28 @@ pub trait Reinforcement {
     fn start_nodes() -> Vec<Box<Node>>;
 
     /// The activation function used by new hidden nodes.
-    fn newnode_activation_f() -> fn(f32) -> f32;
+    fn newnode_activation_function() -> ActivationFunction;
+
+    /// Custom Activation function, no. 1
+    fn custom_activation_f1() -> fn(f32) -> f32 {
+        identity
+    }
+    /// Custom Activation function, no. 2
+    fn custom_activation_f2() -> fn(f32) -> f32 {
+        identity
+    }
+    /// Custom Activation function, no. 3
+    fn custom_activation_f3() -> fn(f32) -> f32 {
+        identity
+    }
+    /// Custom Activation function, no. 4
+    fn custom_activation_f4() -> fn(f32) -> f32 {
+        identity
+    }
+    /// Custom Activation function, no. 5
+    fn custom_activation_f5() -> fn(f32) -> f32 {
+        identity
+    }
 
     /// Default values when creating an inctance of this.
     fn init() -> Self;
@@ -86,11 +115,11 @@ pub trait Reinforcement {
     fn get_outputs(&mut self, dac: &DAC);
 
     /// Updates the state values after getting the output.
-    fn update_physics(&mut self, delta_t: f32);   // delta t
+    fn update_physics(&mut self, delta_t: f32);
 
     /// Updates the score, reflecting how well the AI is doing at that instant.  
     /// The score should not end up negative.
-    fn update_score(&mut self, score: &mut f32, delta_t: f32);    // delta t
+    fn update_score(&mut self, score: &mut f32, delta_t: f32);
 
     /// Get a mutated version of this network.  
     ///
@@ -129,7 +158,7 @@ pub trait Reinforcement {
     }
     
 
-    // -------------------------------------------------- Drawing
+    // -------------------------------------------------- Vk
 
 
     /// Defines the vertices to be drawn, and, optionally, indices for the order in which to draw the vertices.

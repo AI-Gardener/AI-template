@@ -806,17 +806,17 @@ impl Vk {
         }
     }
 
-    pub fn view_agent<State: Reinforcement + Clone + Send + Sync>(&mut self, agent: Agent<State>) {
+    pub fn view_agent<State: Reinforcement + Clone + Send + Sync>(&mut self, agent: &mut Agent<State>) {
         self.inner.view(&mut self.event_loop, agent);
     }
 
-    pub fn save_agent<State: Reinforcement + Clone + Send + Sync>(&mut self, agent: Agent<State>, width: u32, height: u32, frames: u32, delta_t: f32) {
+    pub fn save_agent<State: Reinforcement + Clone + Send + Sync>(&mut self, agent: &mut Agent<State>, width: u32, height: u32, frames: u32, delta_t: f32) {
         self.inner.save(agent, width, height, frames, delta_t);
     }
 }
 
 impl VkInner {
-    fn view<State: Reinforcement + Clone + Send + Sync>(&mut self, event_loop: &mut EventLoop<()>, mut agent: Agent<State>) {
+    fn view<State: Reinforcement + Clone + Send + Sync>(&mut self, event_loop: &mut EventLoop<()>, agent: &mut Agent<State>) {
         agent.dac.reordered();
         agent.state.draw_transformations(&mut self.transformations);
         let mut count = 0;
@@ -989,7 +989,7 @@ impl VkInner {
         });
     }
 
-    fn save<State: Reinforcement + Clone + Send + Sync>(&mut self, mut agent: Agent<State>, width: u32, height: u32, frames: u32, delta_t: f32) {
+    fn save<State: Reinforcement + Clone + Send + Sync>(&mut self, agent: &mut Agent<State>, width: u32, height: u32, frames: u32, delta_t: f32) {
         self.recreate_swapchain = true;
         self.recreate_swapchain([width, height]);
 
