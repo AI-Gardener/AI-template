@@ -5,7 +5,7 @@ pub use utils::*;
 mod simulation;
 pub use simulation::*;
 mod network;
-use network::*;
+// use network::*;
 mod shaders;
 use shaders::*;
 
@@ -17,7 +17,7 @@ use vulkano::{
         allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, CopyImageToBufferInfo, PrimaryAutoCommandBuffer, RenderPassBeginInfo
     }, descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet}, device::{
         physical::{PhysicalDevice, PhysicalDeviceType}, Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags
-    }, format::Format, image::{view::ImageView, Image, ImageCreateInfo, ImageType, ImageUsage, SampleCount}, instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions}, memory::allocator::{AllocationCreateInfo, FreeListAllocator, GenericMemoryAllocator, MemoryTypeFilter, StandardMemoryAllocator}, pipeline::{
+    }, format::Format, image::{view::ImageView, Image, ImageCreateInfo, ImageType, ImageUsage, SampleCount}, instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions}, memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator}, pipeline::{
         graphics::{
             color_blend::{ColorBlendAttachmentState, ColorBlendState}, depth_stencil::{DepthState, DepthStencilState}, input_assembly::InputAssemblyState, multisample::MultisampleState, rasterization::RasterizationState, vertex_input::{Vertex, VertexDefinition}, viewport::{Viewport, ViewportState}, GraphicsPipelineCreateInfo
         }, layout::PipelineDescriptorSetLayoutCreateInfo, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo
@@ -33,12 +33,13 @@ use winit::{
 // -------------------------------------------------- Structs
 
 
-pub struct Vk  {
+pub struct Vk<State: Reinforcement + Clone + Send + Sync> {
     event_loop: EventLoop<()>,
     inner: VkInner,
+    painters: Vec<Box<dyn Painter<State>>>,
 }
 #[allow(unused)]
-struct VkInner  {
+pub(crate) struct VkInner {
     library: Arc<vulkano::VulkanLibrary>,
     instance_extensions: InstanceExtensions,
     instance: Arc<Instance>,
@@ -69,39 +70,41 @@ struct VkInner  {
     render_pass: Arc<RenderPass>,
     framebuffers: Vec<Arc<Framebuffer>>,
 
+    image_extent: [u32; 2],
+    swap_redblue: bool,
+
     recreate_swapchain: bool,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
-
-    painters: Vec<Box<dyn Painter>>,
 }
 
-pub(crate) trait Painter {
-    /// Initializes this painter.
-    fn init<State: Reinforcement + Clone + Send + Sync>(
-        device: Arc<Device>,
-        memory_allocator: Arc<StandardMemoryAllocator>,
-        ds_allocator: StandardDescriptorSetAllocator,
-        render_pass: Arc<RenderPass>,
-        image_extent: [f32; 3],
-    ) -> Box<Self>;
+pub(crate) trait Painter<State: Reinforcement + Clone + Send + Sync> {
     /// On swapchain recreation, recreates the pipeline of this painter.
     fn recreate_pipeline(
         &mut self,
         render_pass: Arc<RenderPass>,
-        image_extent: [f32; 3]
+        image_extent: [u32; 2]
     );
     /// Executes arbitrary CPU operations before drawing.
-    fn prepare_draw(&mut self);
+    fn prepare_draw(
+        &mut self,
+        vkinner: &VkInner,
+        agent: &mut Agent<State>,
+        image_index: u32,
+    );
     /// Informs this command buffer builder of the steps to take to paint.
-    fn draw(&mut self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>);
+    fn draw(
+        &mut self,
+        cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+        image_index: u32
+    );
 }
 
 
 // -------------------------------------------------- Vk
 
 
-impl Vk {
-    pub fn init<State: Reinforcement + Clone + Send + Sync>() -> Self {
+impl<State: Reinforcement + Clone + Send + Sync> Vk<State> {
+    pub fn init() -> Self {
         let event_loop = EventLoop::new();
 
         // --------------------------------------------------
@@ -211,13 +214,12 @@ impl Vk {
         let min_image_count = surface_capabilities.min_image_count.max(8);
         println!("Max image count is {:?}", surface_capabilities.max_image_count);
         println!("max_uniform_buffer_range is {:?}", device.physical_device().properties().max_uniform_buffer_range);
-        println!("max_descriptor_set_uniform_buffers is {:?}", device.physical_device().properties().max_descriptor_set_uniform_buffers);
         let image_format = device
             .physical_device()
             .surface_formats(&surface, Default::default())
             .unwrap()[0]
             .0;
-        println!("{:?}", image_format);
+        println!("Image format: {:?}", image_format);
         let composite_alpha = surface_capabilities
             .supported_composite_alpha
             .into_iter()
@@ -320,65 +322,86 @@ impl Vk {
                 .unwrap()
             })
             .collect::<Vec<_>>();
+
+        let image_extent = [images[0].extent()[0], images[0].extent()[1]];
+        let swap_redblue = false;
+
         let recreate_swapchain = false;
         let previous_frame_end = Some(sync::now(device.clone()).boxed());
 
+        let vkinner = VkInner {
+            library,
+            instance_extensions,
+            instance,
+
+            window,
+            surface,
+
+            device_extensions,
+            physical_device,
+            queue_family_index,
+            device,
+            queue,
+
+            memory_allocator,
+            cb_allocator,
+            ds_allocator,
+
+            surface_capabilities,
+            min_image_count,
+            image_format,
+            composite_alpha,
+            present_mode,
+
+            msaa_image,
+            depth_image,
+            images,
+            swapchain,
+            render_pass,
+            framebuffers,
+
+            image_extent,
+            swap_redblue,
+
+            recreate_swapchain,
+            previous_frame_end,
+        };
+
+        let painters: Vec<Box<dyn Painter<State>>> = vec![
+            Box::new(
+                Simulation::init::<State>(
+                    &vkinner
+                    // device.clone(),
+                    // memory_allocator.clone(),
+                    // &ds_allocator,
+                    // render_pass.clone(),
+                    // images[0].extent()
+                )
+            ),
+        ];
+
         Vk {
             event_loop,
-            inner: VkInner {
-                library,
-                instance_extensions,
-                instance,
-
-                window,
-                surface,
-
-                device_extensions,
-                physical_device,
-                queue_family_index,
-                device,
-                queue,
-
-                memory_allocator,
-                cb_allocator,
-                ds_allocator,
-
-                surface_capabilities,
-                min_image_count,
-                image_format,
-                composite_alpha,
-                present_mode,
-
-                msaa_image,
-                depth_image,
-                images,
-                swapchain,
-                render_pass,
-                framebuffers,
-
-                recreate_swapchain,
-                previous_frame_end,
-
-                painters,
-            },
+            inner: vkinner,
+            painters,
         }
     }
 
-    pub fn view_agent<State: Reinforcement + Clone + Send + Sync>(&mut self, agent: &mut Agent<State>) {
-        self.inner.view(&mut self.event_loop, agent);
+    pub fn view_agent(&mut self, agent: &mut Agent<State>) {
+        self.inner.view(&mut self.painters, &mut self.event_loop, agent);
     }
 
-    pub fn save_agent<State: Reinforcement + Clone + Send + Sync>(&mut self, agent: &mut Agent<State>, width: u32, height: u32, frames: u32, delta_t: f32) {
-        self.inner.save(agent, width, height, frames, delta_t);
+    pub fn save_agent(&mut self, agent: &mut Agent<State>, width: u32, height: u32, frames: u32, delta_t: f32) {
+        self.inner.save(&mut self.painters, agent, width, height, frames, delta_t);
     }
 }
 
 impl VkInner {
-    fn view<State: Reinforcement + Clone + Send + Sync>(&mut self, event_loop: &mut EventLoop<()>, agent: &mut Agent<State>) {
+    fn view<State: Reinforcement + Clone + Send + Sync>(&mut self, painters: &mut Vec<Box<dyn Painter<State>>>, event_loop: &mut EventLoop<()>, agent: &mut Agent<State>) {
+        self.swap_redblue = false;
+
         agent.dac.reordered();
-        agent.state.draw_transformations(&mut self.transformations);
         let mut count = 0;
-        // let start_time = Instant::now();
         let mut last_time = Instant::now();
         event_loop.run_return(move |event, _, control_flow| {
             match event {
@@ -399,13 +422,12 @@ impl VkInner {
                     if image_extent.contains(&0) {
                         return;
                     }
-                    self.recreate_swapchain(image_extent);
+                    self.recreate_swapchain(painters, image_extent);
                     self.previous_frame_end.as_mut().unwrap().cleanup_finished();
 
                     let delta_t = last_time.elapsed();
                     agent.evaluate_step(delta_t.as_secs_f32());
                     last_time += delta_t;
-                    agent.state.draw_transformations(&mut self.transformations);
 
                     let (image_index, suboptimal, acquire_future) =
                         match acquire_next_image(self.swapchain.clone(), None).map_err(Validated::unwrap) {
@@ -423,44 +445,9 @@ impl VkInner {
                         println!("\nTHERE ARE MORE SWAPCHAIN IMAGES THAN UNIFORM DESCRIPTORS\nimages_index: {}\n MAX_UNIFORM_BUFFERS: {}", image_index, MAX_UNIFORM_BUFFERS);
                     }
 
-                    // TODO Less buffers? Less desciptors? Less descriptor updates?
-                    // let transform_uniform_offset = MAX_MATRICES as u32 * image_index;
-                    {
-                        let mut write_guard = self.staging_transform_uniform.write().unwrap();
-            
-                        for (o, i) in write_guard.iter_mut().zip(self.transformations.iter()) {
-                            *o = *i;
-                        }
-                    }
-                    let push = Push {
-                        resolution: [self.window.inner_size().width, self.window.inner_size().height],
-                        time: agent.instant,
-                        hw_ratio: self.window.inner_size().height as f32 / self.window.inner_size().width as f32,
-                        swap_redblue: 0,
-                    };
-
-                    let mut uniform_copy_cb_builder = AutoCommandBufferBuilder::primary(
-                        &self.cb_allocator,
-                        self.queue.queue_family_index(),
-                        CommandBufferUsage::OneTimeSubmit,
-                    )
-                    .unwrap();
-                    uniform_copy_cb_builder
-                        .copy_buffer(CopyBufferInfo::buffers(
-                                self.staging_transform_uniform.clone().into_bytes(),
-                                self.transform_uniforms[image_index as usize].clone().into_bytes(),
-                            )
-                        )
-                        .unwrap();
-                    let uniform_copy_command_buffer = uniform_copy_cb_builder.build().unwrap();
-
-                    sync::now(self.device.clone()).boxed()
-                        .then_execute(self.queue.clone(), uniform_copy_command_buffer)
-                        .unwrap()
-                        .then_signal_fence_and_flush()
-                        .unwrap()
-                        .wait(None)
-                        .unwrap();
+                    painters.iter_mut().for_each(|painter| {
+                        painter.prepare_draw(self, agent, image_index);
+                    });
 
                     // TODO Reuse command buffer
                     let mut cb_builder = AutoCommandBufferBuilder::primary(
@@ -481,8 +468,11 @@ impl VkInner {
                             },
                             Default::default(),
                         )
-                        .unwrap()
-                    self.__.
+                        .unwrap();
+                    painters.iter_mut().for_each(|painter| {
+                        painter.draw(&mut cb_builder, image_index);
+                    });
+                    cb_builder
                         .end_render_pass(Default::default())
                         .unwrap();
                     let command_buffer = cb_builder.build().unwrap();
@@ -520,21 +510,13 @@ impl VkInner {
         });
     }
 
-    fn save<State: Reinforcement + Clone + Send + Sync>(&mut self, agent: &mut Agent<State>, width: u32, height: u32, frames: u32, delta_t: f32) {
+    fn save<State: Reinforcement + Clone + Send + Sync>(&mut self, painters: &mut Vec<Box<dyn Painter<State>>>, agent: &mut Agent<State>, width: u32, height: u32, frames: u32, delta_t: f32) {
+        self.swap_redblue = true;
+
         self.recreate_swapchain = true;
-        self.recreate_swapchain([width, height]);
+        self.recreate_swapchain(painters, [width, height]);
 
         agent.dac.reordered();
-        agent.state.draw_transformations(&mut self.transformations);
-
-
-        {
-            let mut write_guard = self.staging_transform_uniform.write().unwrap();
-
-            for (o, i) in write_guard.iter_mut().zip(self.transformations.iter()) {
-                *o = *i;
-            }
-        }
 
         let save_buffer: Subbuffer<[u8]> = Buffer::new_slice(
             self.memory_allocator.clone(),
@@ -549,17 +531,13 @@ impl VkInner {
             },
             (width * height * 4) as u64
         ).unwrap();
-        let push = Push {
-            // Unused for saving
-            resolution: [self.window.inner_size().width, self.window.inner_size().height],
-            // Unused for saving
-            time: agent.instant,
-            hw_ratio: height as f32 / width as f32,
-            swap_redblue: 1,
-        };
 
         for i in 0..frames {
-            // ----- Draw frame
+            self.previous_frame_end.as_mut().unwrap().cleanup_finished();
+
+            painters.iter_mut().for_each(|painter| {
+                painter.prepare_draw(&self, agent, 0);
+            });
 
             let mut cb_builder = AutoCommandBufferBuilder::primary(
                 &self.cb_allocator,
@@ -568,13 +546,6 @@ impl VkInner {
             )
             .unwrap();
             cb_builder
-                .copy_buffer(CopyBufferInfo::buffers(
-                        self.staging_transform_uniform.clone().into_bytes(),
-                        self.transform_uniforms[0].clone().into_bytes(),
-                    )
-                )
-                .unwrap()
-
                 .begin_render_pass(
                     RenderPassBeginInfo {
                         clear_values: vec![
@@ -586,35 +557,11 @@ impl VkInner {
                     },
                     Default::default(),
                 )
-                .unwrap()
-                .bind_pipeline_graphics(self.drawing_pipeline.clone())
-                .unwrap()
-                .bind_descriptor_sets(
-                    PipelineBindPoint::Graphics,
-                    self.drawing_pipeline.layout().clone(),
-                    0,
-                    self.drawing_descriptor_sets[0].clone(),
-                )
-                .unwrap()
-                .push_constants(
-                    self.drawing_pipeline.layout().clone(),
-                    0,
-                    push.clone()
-                )
-                .unwrap()
-                .bind_vertex_buffers(0, self.vertex_buffer.clone())
                 .unwrap();
-            if self.indexed {
-                cb_builder
-                .bind_index_buffer(self.index_buffer.clone())
-                .unwrap()
-                .draw_indexed(self.index_buffer.len() as u32, 1, 0, 0, 0)
-                .unwrap()
-            } else {
-                cb_builder
-                .draw(self.vertex_buffer.len() as u32, 1, 0, 0)
-                .unwrap()
-            }
+            painters.iter_mut().for_each(|painter| {
+                painter.draw(&mut cb_builder, 0);
+            });
+            cb_builder
                 .end_render_pass(Default::default())
                 .unwrap()
 
@@ -623,7 +570,6 @@ impl VkInner {
                     save_buffer.clone()
                 ))
                 .unwrap();
-
             let command_buffer = cb_builder.build().unwrap();
                 
             let future = self.previous_frame_end
@@ -636,31 +582,13 @@ impl VkInner {
                 
             match future.map_err(Validated::unwrap) {
                 Ok(future) => {
-
-
-                    // ----- Update for next frame
-
-                    agent.evaluate_step(delta_t);
-                    agent.state.draw_transformations(&mut self.transformations);
-
-                    // ----- Finish GPU execution
+                    agent.evaluate_step(delta_t); // while GPU is executing
                     
                     future
                         .wait(None)
                         .unwrap();
 
-                    // ----- Post-Execution updates
-
-                    {
-                        let mut write_guard = self.staging_transform_uniform.write().unwrap();
-            
-                        for (o, i) in write_guard.iter_mut().zip(self.transformations.iter()) {
-                            *o = *i;
-                        }
-                    }
-                    
-                    // ----- Export frame
-
+                    // Export frame
                     {
                         let filename = format!("output/frame_{:010}.png", i);
         
@@ -670,13 +598,7 @@ impl VkInner {
                     };
                     println!("Exported frame {}", i);
 
-                    // ----- ---
-
                     self.previous_frame_end = Some(future.boxed());
-
-                    self.previous_frame_end.as_mut().unwrap().cleanup_finished();
-
-
                 }
                 Err(VulkanError::OutOfDate) => {
                     println!("\n\n\n\n\nfailed to flush future: OUT OF DATE\n\n\n\n\n");
@@ -690,9 +612,10 @@ impl VkInner {
         }
     }
 
-    fn recreate_swapchain(&mut self, image_extent: [u32; 2]) {
+    fn recreate_swapchain<State: Reinforcement + Clone + Send + Sync>(&mut self, painters: &mut Vec<Box<dyn Painter<State>>>, image_extent: [u32; 2]) {
         if self.recreate_swapchain {
             self.recreate_swapchain = false;
+            self.image_extent = image_extent;
 
             ((self.swapchain, self.images), self.msaa_image, self.depth_image) = {
                 (
@@ -750,60 +673,9 @@ impl VkInner {
                 })
                 .collect::<Vec<_>>();
 
-            self.drawing_pipeline = {
-                let vertex_input_state = InputVertex::per_vertex()
-                    .definition(&self.drawing_vs.info().input_interface)
-                    .unwrap();
-                let stages = [
-                    PipelineShaderStageCreateInfo::new(self.drawing_vs.clone()),
-                    PipelineShaderStageCreateInfo::new(self.drawing_fs.clone()),
-                ];
-                let layout = PipelineLayout::new(
-                    self.device.clone(),
-                    PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
-                        .into_pipeline_layout_create_info(self.device.clone())
-                        .unwrap(),
-                )
-                .unwrap();
-                let subpass = Subpass::from(self.render_pass.clone(), 0).unwrap();
-                let extent = self.images[0].extent();
-
-                GraphicsPipeline::new(
-                    self.device.clone(),
-                    None,
-                    GraphicsPipelineCreateInfo {
-                        stages: stages.into_iter().collect(),
-                        vertex_input_state: Some(vertex_input_state),
-                        input_assembly_state: Some(InputAssemblyState::default()),
-                        viewport_state: Some(ViewportState {
-                            viewports: [Viewport {
-                                offset: [0.0, 0.0],
-                                extent: [extent[0] as f32, extent[1] as f32],
-                                depth_range: 0.0..=1.0,
-                            }]
-                            .into_iter()
-                            .collect(),
-                            ..Default::default()
-                        }),
-                        rasterization_state: Some(RasterizationState::default()),
-                        multisample_state: Some(MultisampleState {
-                            rasterization_samples: subpass.num_samples().unwrap(),
-                            ..Default::default()
-                        }),
-                        color_blend_state: Some(ColorBlendState::with_attachment_states(
-                            subpass.num_color_attachments(),
-                            ColorBlendAttachmentState::default(),
-                        )),
-                        subpass: Some(subpass.into()),
-                        depth_stencil_state: Some(DepthStencilState {
-                            depth: Some(DepthState::simple()),
-                            ..Default::default()
-                        }),
-                        ..GraphicsPipelineCreateInfo::layout(layout)
-                    },
-                )
-                .unwrap()
-            };
+            painters.iter_mut().for_each(|painter| {
+                painter.recreate_pipeline(self.render_pass.clone(), image_extent);
+            });
         }
     }
 }

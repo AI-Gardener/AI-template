@@ -32,7 +32,7 @@ impl DAC {
         })
     }
 
-    /// Sets the node processing order, such that children are always processed aftertheir parents.
+    /// Sets the node processing order, such that children are always processed after their parents.
     pub(crate) fn reordered(&mut self) {
         // let start = std::time::Instant::now();
 

@@ -63,10 +63,7 @@ impl<State: Reinforcement + Clone + Send + Sync> AI<State> {
     pub fn best_agent_latest(&self) -> Agent<State> {
         let best_agent = self.past_agents.last().unwrap()[0].clone();
         println!("Best DAC network: {:?}\nBest DAC network score: {}.\nDisplaying the evaluation...", best_agent.dac, best_agent.score);
-        Agent {
-            dac: best_agent.dac,
-            ..Agent::new()
-        }
+        Agent::from_nodes(best_agent.dac.nodes)
     }
 
     pub fn best_agent_at(&self, generation: usize) -> Agent<State> {

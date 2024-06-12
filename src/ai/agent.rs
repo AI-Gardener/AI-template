@@ -33,7 +33,7 @@ impl<State: Reinforcement + Clone + Send + Sync> Agent<State> {
         }
     }
 
-    fn from_nodes(nodes: Vec<Box<Node>>) -> Self {
+    pub(crate) fn from_nodes(nodes: Vec<Box<Node>>) -> Self {
         Self {
             dac: DAC::new(nodes),
             score: 0.1,

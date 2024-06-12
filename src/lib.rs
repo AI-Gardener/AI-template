@@ -186,9 +186,12 @@ pub trait Reinforcement {
         matrices[0] = transform;
     }
 
-    // TODO These
-    // draw_save_fps
     fn draw_view_present_mode() -> PresentMode {
         PresentMode::Fifo
+    }
+
+    // TODO
+    fn present_while_saving() -> bool {
+        true
     }
 }
